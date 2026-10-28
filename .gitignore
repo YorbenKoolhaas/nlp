@@ -3,6 +3,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+**/__pycache__/
+
 # C extensions
 *.so
 
@@ -218,3 +220,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# Filter notebook metadata
+# Source - https://stackoverflow.com/a/73218382
+# Posted by ocean11, modified by community. See post 'Timeline' for change history
+# Retrieved 2026-10-28, License - CC BY-SA 4.0
+
+[filter "strip-notebook-output"]
+clean = "jupyter nbconvert --ClearOutputPreprocessor.enabled=True --ClearMetadataPreprocessor.enabled=True --to=notebook --stdin --stdout --log-level=ERROR"
