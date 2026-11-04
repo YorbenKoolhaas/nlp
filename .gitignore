@@ -3,11 +3,14 @@
 *.py[codz]
 *$py.class
 
+**/results/
+
 # C extensions
 *.so
 
 # Distribution / packaging
 .Python
+.directory
 build/
 develop-eggs/
 dist/
