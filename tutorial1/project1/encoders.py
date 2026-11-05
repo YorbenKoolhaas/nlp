@@ -1,9 +1,13 @@
 ## token indicators
 import numpy as np
+from collections import Counter
+from tqdm import tqdm
+
 from tokenizers import Tokenizer
 from tokenizers.pre_tokenizers import Metaspace
 from tokenizers.trainers import BpeTrainer
 from tokenizers.models import BPE
+
 
 def train_tokenizer(corpus, vocab_size, min_frequency, pretokenizer=Metaspace(), unk_token="[UNK]"):
     """
@@ -34,6 +38,7 @@ def train_tokenizer(corpus, vocab_size, min_frequency, pretokenizer=Metaspace(),
 
     return tokenizer
 
+
 class Encoder:
 
     def __len__(self) -> int:
@@ -43,7 +48,8 @@ class Encoder:
     def __call__(self, x: str) -> 'np.array':
         """Represent x as a D-dimensional vector of real numbers"""
         raise NotImplementedError("Concrete implementations will be discussed later")
-    
+
+
 class TokenIndicator(Encoder):
 
     def __init__(self, tokenizer: Tokenizer):
@@ -62,4 +68,57 @@ class TokenIndicator(Encoder):
         vector = np.zeros(len(self))
         vector[unique_token_ids] = 1
 
+        return vector
+
+
+class TfIdfEncoder():
+
+    def __init__(self, tokenizer: Tokenizer, corpus: list):
+        self.tokenizer = tokenizer
+
+        # Building the document frequency (df) dictionary
+        df = Counter()
+        for doc in tqdm(corpus):
+            for token_id in set(self.tokenizer.encode(doc).ids):
+                df[token_id] += 1
+
+        # Calculating the inverse document frequency (idf) for each token
+        N = len(corpus)
+        self.idf = {token_id: np.log(N / df[token_id]) for token_id in df}
+
+
+    def __len__(self) -> int:
+        """Dimensionality of the representation space"""
+        return len(self.tokenizer.get_vocab())
+
+    def __call__(self, x: str) -> 'np.array':
+        """Represent x as a D-dimensional vector of real numbers"""
+        x_encoded = self.tokenizer.encode(x).ids
+
+        counts = Counter(x_encoded)
+        vector = np.zeros(len(self.tokenizer.get_vocab()))
+
+        for token_id, count in counts.items():
+            tf = count / len(x_encoded)  # term frequency
+            vector[token_id] = tf * self.idf.get(token_id)
+
+        return vector
+
+
+class BagOfWords(Encoder):
+
+    def __init__(self, tokenizer: Tokenizer):
+        self.tokenizer = tokenizer
+
+    def __len__(self) -> int:
+        """Dimensionality of the representation space"""
+        return len(self.tokenizer.get_vocab())
+
+    def __call__(self, x: str) -> 'np.array':
+        """Represent x as a D-dimensional vector of real numbers"""
+        unique_token_ids = Counter(self.tokenizer.encode(x).ids)
+
+        vector = np.zeros(len(self))
+        for id, count in unique_token_ids.items():
+            vector[id] = count
         return vector
