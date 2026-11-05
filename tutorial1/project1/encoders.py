@@ -102,6 +102,12 @@ class TfIdfEncoder():
             tf = count / len(x_encoded)  # term frequency
             vector[token_id] = tf * self.idf.get(token_id)
 
+        # L2 normalisation: every document vector gets length 1 (as in sklearn's TfidfVectorizer).
+        # Without it the values are tiny (~0.01-0.05), which regularisation in loglin/MLP pushes towards zero.
+        norm = np.linalg.norm(vector)
+        if norm > 0:
+            vector /= norm
+
         return vector
 
 

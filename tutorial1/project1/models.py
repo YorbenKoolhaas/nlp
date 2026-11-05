@@ -1,6 +1,17 @@
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, issparse, vstack as sparse_vstack
 from sklearn.linear_model import LogisticRegression
 import pickle
+
+
+def to_csr(vectors):
+    """
+    Stack a list of document vectors into one CSR matrix.
+    Accepts dense numpy vectors (as returned by the encoders) or sparse 1 x D rows; the latter avoids
+    building a dense [num_docs, vocab_size] matrix in memory, which matters for large vocabularies.
+    """
+    if len(vectors) > 0 and issparse(vectors[0]):
+        return sparse_vstack(vectors, format="csr")
+    return csr_matrix(vectors)
 
 
 class LogLinearModel:
@@ -28,7 +39,7 @@ class LogLinearModel:
         training_labels = [label for _, label in training_set]
 
         #To train the model more efficiently, we transform the training vectors to a sparse matrix
-        X_train_sparse = csr_matrix(training_vectors)
+        X_train_sparse = to_csr(training_vectors)
 
         # Train the logistic model
         logistic_model = LogisticRegression(solver="saga", max_iter=max_iter, n_jobs=n_jobs) #sparse matrix frinedly solver 
@@ -50,7 +61,7 @@ class LogLinearModel:
         encoder: the Encoder used for in the model's training
         """
         validation_vectors = [encoder(text) for text in texts]
-        X_val_sparse = csr_matrix(validation_vectors)
+        X_val_sparse = to_csr(validation_vectors)
         predictions = model.predict(X_val_sparse)
         return predictions
 
@@ -64,7 +75,7 @@ class LogLinearModel:
         encoder: the Encoder used for in the model's training
         """
         validation_vectors = [encoder(text) for text in texts]
-        X_val_sparse = csr_matrix(validation_vectors)
+        X_val_sparse = to_csr(validation_vectors)
         probs = model.predict_proba(X_val_sparse)
         return probs
 
@@ -341,8 +352,8 @@ def train_neural_network_model(training_set, validation_set, num_classes, encode
     print(f"Document transformation done! Time taken: {time_document_to_vector - time_start:.3f} seconds")
     
     # Keep SciPy sparse here; conversion to torch happens in sparse_collate
-    X_train_sparse = csr_matrix(training_vectors)
-    X_val_sparse = csr_matrix(validation_vectors)
+    X_train_sparse = to_csr(training_vectors)
+    X_val_sparse = to_csr(validation_vectors)
 
     train_dataset = SparseDataset(X_train_sparse, training_labels) # create the training dataset
     val_dataset = SparseDataset(X_val_sparse, validation_labels) # create the validation dataset
@@ -466,7 +477,7 @@ def predict_probs(texts, model, encoder, batch_size=10):
     vectors = [encoder(x) for x in texts]
     labels = [0 for _ in texts]
 
-    x_sparse = csr_matrix(vectors)
+    x_sparse = to_csr(vectors)
 
     dl = DataLoader(
         SparseDataset(x_sparse, labels),
