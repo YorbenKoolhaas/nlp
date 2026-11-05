@@ -129,6 +129,65 @@ class SparseMLP(nn.Module):
         # logprobs
         return self.output(x)
 
+
+class DeepSparseMLP(nn.Module):
+    """Modified MLP: same sparse first layer as SparseMLP, followed by extra dense hidden layers.
+
+    Inputs: feature vectors of size `input_dim` (e.g. bag-of-words).
+    Process: sparse matmul into the first hidden layer, then for every extra hidden layer:
+        Linear -> LayerNorm -> ReLU -> dropout, and finally linear (num_classes) and log-softmax outputs
+    Output: logprobs over `num_classes`.
+    """
+
+    def __init__(self, input_dim, hidden_dims, num_classes, dropout=0.2):
+        """
+        input_dim: size of the input feature space (e.g. vocabulary size)
+        hidden_dims: widths of the hidden layers, e.g. [256, 128] for two hidden layers
+        num_classes: number of output labels
+        dropout: fraction of hidden units zeroed during training, applied after every hidden layer
+        """
+        super().__init__()
+        hidden_dims = list(hidden_dims)
+
+        # First layer is identical to SparseMLP: dense weights, sparse inputs.
+        # Named `weight` so predict_probs can find the device via model.weight.device.
+        self.weight = nn.Parameter(
+            torch.empty(input_dim, hidden_dims[0])
+        )
+        self.bias = nn.Parameter(
+            torch.zeros(hidden_dims[0])
+        )
+        self.first_norm = nn.LayerNorm(hidden_dims[0])
+        self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+
+        # Extra dense hidden layers; LayerNorm keeps activations on a stable scale as depth grows.
+        layers = []
+        for d_in, d_out in zip(hidden_dims[:-1], hidden_dims[1:]):
+            layers += [nn.Linear(d_in, d_out), nn.LayerNorm(d_out), nn.ReLU(), nn.Dropout(dropout)]
+        self.hidden = nn.Sequential(*layers)
+
+        self.output = nn.Sequential(
+            nn.Linear(hidden_dims[-1], num_classes),
+            nn.LogSoftmax(dim=-1)
+        )
+
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, x):
+        """Map a sparse batch [batch, input_dim] to class log-probabilities [batch, num_classes]."""
+        x = torch.sparse.mm(x, self.weight)
+        x = x + self.bias
+
+        x = self.first_norm(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+
+        x = self.hidden(x)
+        # logprobs
+        return self.output(x)
+
+
 def scipy_to_torch_sparse(x):
     """Convert a SciPy sparse matrix to a coalesced PyTorch sparse COO tensor.
 
@@ -136,7 +195,7 @@ def scipy_to_torch_sparse(x):
     Output: torch sparse tensor with the same shape and non-zero values.
     """
     x = x.tocoo()
-    indices = torch.tensor([x.row, x.col], dtype=torch.long)
+    indices = torch.tensor(np.vstack([x.row, x.col]), dtype=torch.long)
     values = torch.tensor(x.data, dtype=torch.float32)
 
     return torch.sparse_coo_tensor(indices, values, size=x.shape).coalesce()
@@ -257,11 +316,13 @@ def evaluate(model, dataloader, criterion, device="cpu"):
 
 def train_neural_network_model(training_set, validation_set, num_classes, encoder, save_to,   
                                 hidden_dim=128, dropout=0.1, batch_size=64, learning_rate=1e-3, 
-                                weight_decay=1e-4, num_epochs=20, device=torch.device("cpu")):
-    """Encode texts, train SparseMLP, and checkpoint the best validation model.
+                                weight_decay=1e-4, num_epochs=20, device=torch.device("cpu"), hidden_dims=None):
+    """Encode texts, train SparseMLP (or DeepSparseMLP), and checkpoint the best validation model.
 
     Inputs: train/val (text, label) pairs, num_classes, encoder (text -> sparse vector), path prefix to save weights,
             plus standard training hyperparameters.
+            hidden_dims: if None, train the single-hidden-layer SparseMLP of width `hidden_dim`;
+                         if a list (e.g. [256, 128]), train a DeepSparseMLP with those hidden layers.
     Process: vectorise documents, build sparse dataloaders, train for `num_epochs`, save best-by-val-loss.
     Output: per-epoch metrics list, best epoch index, and validation predictions from the best model.
     """
@@ -305,17 +366,28 @@ def train_neural_network_model(training_set, validation_set, num_classes, encode
     print(f"Dataloader done! Time taken: {time_dataloader - time_document_to_vector:.3f} seconds")
 
     # save architecture-defining arguments
-    with open(f"{save_to}.json", "w", encoding="utf-8") as f:
+    if hidden_dims is None:
         args = {
-            'input_dim': len(encoder), 
-            'hidden_dim': hidden_dim, 
-            'num_classes': num_classes, 
+            'input_dim': len(encoder),
+            'hidden_dim': hidden_dim,
+            'num_classes': num_classes,
             'dropout': dropout,
         }
-        json.dump(args, f, indent=2, ensure_ascii=False)
-        
-    # Create the model based on the input dimension, chosen hidden dimension, number of classification classes and dropout rate
-    model = SparseMLP(input_dim=len(encoder), hidden_dim=hidden_dim, num_classes=num_classes, dropout=dropout).to(device)
+        architecture = SparseMLP
+    else:
+        args = {
+            'input_dim': len(encoder),
+            'hidden_dims': list(hidden_dims),
+            'num_classes': num_classes,
+            'dropout': dropout,
+        }
+        architecture = DeepSparseMLP
+
+    with open(f"{save_to}.json", "w", encoding="utf-8") as f:
+        json.dump({**args, 'architecture': architecture.__name__}, f, indent=2, ensure_ascii=False)
+
+    # Create the model based on the input dimension, chosen hidden dimension(s), number of classification classes and dropout rate
+    model = architecture(**args).to(device)
     criterion = nn.NLLLoss() # create the loss function
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay) # create the optimizer
 
@@ -364,14 +436,16 @@ def load(path, device="cpu"):
 
     with open(f"{path}.json", "r", encoding="utf-8") as f:
         args = json.load(f)
-    
-    with open(f"{path}.pt", "rb") as f:
-        state_dict = torch.load(f)
-        
+
     if isinstance(device, str):
         device = torch.device(device)
-        
-    model = SparseMLP(**args)
+
+    with open(f"{path}.pt", "rb") as f:
+        state_dict = torch.load(f, map_location=device)
+
+    # older checkpoints have no 'architecture' key and are always SparseMLP
+    architecture = {"SparseMLP": SparseMLP, "DeepSparseMLP": DeepSparseMLP}[args.pop("architecture", "SparseMLP")]
+    model = architecture(**args)
     model.load_state_dict(state_dict)
     model = model.to(device)
     return model
@@ -415,3 +489,109 @@ def predict_probs(texts, model, encoder, batch_size=10):
             all_probs.extend(logprobs.exp().detach().cpu().numpy())
             
     return np.array(all_probs)
+
+
+import os
+import random
+import tempfile
+
+
+class MLPModel:
+    """
+    A wrapper around SparseMLP (single hidden layer, as in the tutorial) with the same interface as LogLinearModel,
+    so that all models can be used interchangeably in the cross-validation loop.
+
+    After fit, the returned model also carries:
+        model.history: per-epoch train/val loss and accuracy
+        model.best_epoch: epoch (0-based) of the checkpoint that was kept
+    """
+    default_hidden_dims = None  # None -> SparseMLP
+
+    @staticmethod
+    def _split_validation(training_set, val_fraction, seed):
+        """Hold out a random `val_fraction` of the training set for checkpoint selection."""
+        indices = list(range(len(training_set)))
+        random.Random(seed).shuffle(indices)
+        n_val = max(1, int(len(indices) * val_fraction))
+        validation_set = [training_set[i] for i in indices[:n_val]]
+        training_set = [training_set[i] for i in indices[n_val:]]
+        return training_set, validation_set
+
+    @classmethod
+    def load(cls, path, device="cpu"):
+        """
+        Load a model from {path}.json and {path}.pt and return it.
+        """
+        return load(path, device=device)
+
+    @classmethod
+    def fit(cls, training_set, encoder, validation_set=None, save_to=None, num_classes=None,
+            hidden_dim=128, hidden_dims="default", dropout=0.1, batch_size=64, learning_rate=1e-3,
+            weight_decay=1e-4, num_epochs=20, val_fraction=0.1, seed=42, device=None):
+        """
+        Constructs, trains and returns an MLP (the checkpoint with the lowest validation loss).
+
+        training_set: list of text-label pairs (a text is a string, a label is a 0-based integer)
+        encoder: an instance of the Encoder class (such as TokenIndicator)
+        validation_set: list of text-label pairs used to pick the best epoch;
+            if None, `val_fraction` of the training set is held out for this
+            (never pass the test fold of a cross-validation split here, that would leak test data into model selection)
+        save_to: (str) if given, save the model to {save_to}.json and {save_to}.pt
+        num_classes: number of labels; if None, inferred as max label + 1
+        hidden_dim: width of the hidden layer (only used by MLPModel)
+        hidden_dims: widths of the hidden layers (only used by DeepMLPModel); "default" uses the class default
+        device: "cuda" / "cpu"; if None, use the GPU when available
+        """
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if hidden_dims == "default":
+            hidden_dims = cls.default_hidden_dims
+        if validation_set is None:
+            training_set, validation_set = cls._split_validation(training_set, val_fraction, seed)
+        if num_classes is None:
+            num_classes = max(int(label) for _, label in training_set + validation_set) + 1
+
+        torch.manual_seed(seed)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = save_to if save_to is not None else os.path.join(tmp_dir, "model")
+            metrics, best_epoch, _ = train_neural_network_model(
+                training_set, validation_set, num_classes, encoder, path,
+                hidden_dim=hidden_dim, dropout=dropout, batch_size=batch_size, learning_rate=learning_rate,
+                weight_decay=weight_decay, num_epochs=num_epochs, device=device, hidden_dims=hidden_dims,
+            )
+            model = load(path, device=device)  # reload the best checkpoint, not the last epoch
+
+        model.history = metrics
+        model.best_epoch = best_epoch
+        return model
+
+    @staticmethod
+    def predict_probs(texts, model, encoder, batch_size=256):
+        """
+        Returns a numpy array [num_texts, num_classes] with the predicted class probabilities.
+
+        texts: a list of texts, each a string
+        model: a trained SparseMLP / DeepSparseMLP
+        encoder: the Encoder used for in the model's training
+        """
+        return predict_probs(texts, model, encoder, batch_size=batch_size)
+
+    @staticmethod
+    def predict(texts, model, encoder, batch_size=256):
+        """
+        Predicts labels (via the most probable class decision rule) for a collection of texts.
+
+        texts: a list of texts, each a string
+        model: a trained SparseMLP / DeepSparseMLP
+        encoder: the Encoder used for in the model's training
+        """
+        return predict_probs(texts, model, encoder, batch_size=batch_size).argmax(axis=1)
+
+
+class DeepMLPModel(MLPModel):
+    """
+    The modified MLP (third architecture): DeepSparseMLP with two hidden layers and LayerNorm.
+    Same interface as MLPModel and LogLinearModel; pass hidden_dims=[...] to fit to change the depth/widths.
+    """
+    default_hidden_dims = [256, 128]
