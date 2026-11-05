@@ -1,7 +1,8 @@
-# uv
+# uv / venv
 **/.python-version
 **/pyproject.toml
 **/uv.lock
+**/settings.json
 
 # Byte-compiled / optimized / DLL files
 **/__pycache__/
