@@ -25,7 +25,7 @@ import time
 import warnings
 
 import numpy as np
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 from sklearn.exceptions import ConvergenceWarning
 from scipy.sparse import csr_matrix
 from sklearn.metrics import accuracy_score, f1_score
@@ -335,6 +335,17 @@ def fit_and_predict(model_name, training_set, val_texts, encoder, num_epochs, pr
 
 
 # ----------------------------------------------------------------------------------------------------------
+
+def seed_all(seed: int = 42) -> None:
+    """Set random seeds for reproducibility across libraries."""
+
+    # Python
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+    # NumPy
+    np.random.seed(seed)
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--encoder", choices=ENCODERS)
@@ -376,8 +387,14 @@ def main():
 
     progress.phase("Dataset laden en opschonen...")
     ds = load_dataset("LabHC/bias_in_bios")
-    texts = utils.clean_corpus(ds["train"]["hard_text"])
-    labels = list(ds["train"]["profession"])
+    full_dataset = concatenate_datasets([
+        ds["train"],
+        ds["test"],
+        ds["dev"]
+    ])
+
+    texts = utils.clean_corpus(full_dataset["hard_text"])
+    labels = list(full_dataset["profession"])
     if args.lowercase:
         texts = [t.lower() for t in texts]
     if args.subset:
