@@ -10,6 +10,7 @@
 *$py.class
 
 **/results/
+!tutorial1/project1/results/
 
 # C extensions
 *.so
