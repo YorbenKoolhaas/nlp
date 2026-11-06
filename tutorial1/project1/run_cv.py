@@ -315,16 +315,20 @@ def install_progress_hooks(progress):
 # ----------------------------------------------------------------------------------------------------------
 # One fold
 # ----------------------------------------------------------------------------------------------------------
-def fit_and_predict(model_name, training_set, val_texts, encoder, num_epochs, progress):
+def fit_and_predict(model_name, training_set, val_texts, encoder, num_epochs, progress, max_iter=100):
     """Returns predicted labels for val_texts and extra info (history / best epoch for the MLPs)."""
     if model_name == "loglin":
         progress.status = "documenten encoderen + logistische regressie trainen"
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", ConvergenceWarning)  # saga with max_iter=100, as in the tutorial
-            model = models.LogLinearModel.fit(training_set, encoder)
+            model = models.LogLinearModel.fit(training_set, encoder, max_iter=max_iter)
         progress.status = "voorspellen op validatiefold"
         preds = models.LogLinearModel.predict(val_texts, model, encoder)  # returns labels
-        return preds, {"n_iter": int(np.max(model.n_iter_))}
+        n_iter = int(np.max(model.n_iter_))
+        converged = n_iter < max_iter
+        progress.phase(f"    logistische regressie: {n_iter}/{max_iter} iteraties, "
+                       f"{'geconvergeerd' if converged else 'NIET geconvergeerd (verhoog --max_iter)'}")
+        return preds, {"n_iter": n_iter, "converged": converged}
 
     wrapper = models.DeepMLPModel if model_name == "deep" else models.MLPModel
     model = wrapper.fit(training_set, encoder, num_classes=NUM_CLASSES, num_epochs=num_epochs, seed=42)
@@ -341,6 +345,7 @@ def main():
     ap.add_argument("--model", choices=MODELS)
     ap.add_argument("--all", action="store_true", help="run all encoder x model combinations")
     ap.add_argument("--num_epochs", type=int, default=5, help="epochs for the MLPs (best epoch was 2-3 with 20)")
+    ap.add_argument("--max_iter", type=int, default=100, help="max saga iterations for loglin (tutorial default: 100)")
     ap.add_argument("--num_folds", type=int, default=5)
     ap.add_argument("--subset", type=int, default=None, help="only the first N training examples (quick test)")
     ap.add_argument("--vocab_size", type=int, default=8000, help="BPE vocabulary size (project.ipynb used 1000)")
@@ -401,6 +406,7 @@ def main():
         result = {
             "config": {"encoder": enc_name, "model": model_name, "num_folds": args.num_folds,
                        "num_epochs": args.num_epochs if model_name != "loglin" else None,
+                       "max_iter": args.max_iter if model_name == "loglin" else None,
                        "hidden_dims": models.DeepMLPModel.default_hidden_dims if model_name == "deep" else None,
                        "vocab_size": args.vocab_size, "min_frequency": args.min_frequency,
                        "lowercase": args.lowercase, "cv_seed": 0, "subset": args.subset},
@@ -416,7 +422,7 @@ def main():
 
             t0 = time.time()
             y_pred, extra = fit_and_predict(model_name, split["training"], val_texts, encoder,
-                                            args.num_epochs, progress)
+                                            args.num_epochs, progress, max_iter=args.max_iter)
             acc = accuracy_score(y_true, y_pred)
             f1 = f1_score(y_true, y_pred, average="macro")
             result["folds"].append({"fold": fold, "accuracy": acc, "macro_f1": f1,
