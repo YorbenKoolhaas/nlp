@@ -113,7 +113,7 @@ def main():
     ap.add_argument("--num_epochs", type=int, default=20)
     ap.add_argument("--num_folds", type=int, default=5)
     ap.add_argument("--subset", type=int, default=None, help="use only the first N training examples (quick test)")
-    ap.add_argument("--out", default="results_deep_bow.json")
+    ap.add_argument("--out", default="results/results_deep_bow.json")
     args = ap.parse_args()
 
     progress = Progress(args.num_folds, args.num_epochs)
