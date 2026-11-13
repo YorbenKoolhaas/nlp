@@ -1,0 +1,38 @@
+{
+  "indicator+loglin": {
+    "test_accuracy": 0.7806579252843977,
+    "test_macro_f1": 0.7091839650823732
+  },
+  "bow+loglin": {
+    "test_accuracy": 0.8019158364372306,
+    "test_macro_f1": 0.7323540692529578
+  },
+  "tfidf+loglin": {
+    "test_accuracy": 0.8048329951851739,
+    "test_macro_f1": 0.7387758590778536
+  },
+  "indicator+mlp": {
+    "test_accuracy": 0.8125246040638343,
+    "test_macro_f1": 0.7528134015864467
+  },
+  "bow+mlp": {
+    "test_accuracy": 0.8089311489971636,
+    "test_macro_f1": 0.7458890163998285
+  },
+  "tfidf+mlp": {
+    "test_accuracy": 0.812918269085183,
+    "test_macro_f1": 0.7550070196864612
+  },
+  "indicator+deep": {
+    "test_accuracy": 0.8113637969496008,
+    "test_macro_f1": 0.7440953248973315
+  },
+  "bow+deep": {
+    "test_accuracy": 0.8096680091653292,
+    "test_macro_f1": 0.7412643261871533
+  },
+  "tfidf+deep": {
+    "test_accuracy": 0.8091935923447294,
+    "test_macro_f1": 0.742909930229164
+  }
+}
