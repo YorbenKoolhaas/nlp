@@ -11,6 +11,7 @@
 
 **/results/
 !tutorial1/project1/results/
+!tutorial2/part2/results/
 
 # C extensions
 *.so
