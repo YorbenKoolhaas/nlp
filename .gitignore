@@ -9,8 +9,11 @@
 *.py[codz]
 *$py.class
 
+# results
 **/results/
 !tutorial1/project1/results/
+!tutorial2/part2/results/
+tutorial2/part2/results/analysis_parameters
 
 # C extensions
 *.so
