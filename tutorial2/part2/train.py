@@ -320,7 +320,7 @@ def train_one_run(
         "best_val_macro_f1": best_val_f1,
         "test": test_metrics,
         "history": history,
-    }
+    }, best_state
 
 
 # ---------------------------------------------------------------------
@@ -369,6 +369,7 @@ def train(args):
     embedding_names = normalize_embeddings(args.embedding)
 
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
+    if args.save_model: (RESULT_DIR / "models").mkdir(parents=True, exist_ok=True)
 
     all_results = {}
 
@@ -440,6 +441,11 @@ def train(args):
 
             print(f"\nRunning {model_name} with {embedding_name}")
 
+
+            model_path = (RESULT_DIR / "models" / filename).with_suffix(".pt")
+
+            best_model_state = None
+            overall_best_macro = 0
             experiment_results = []
 
             for run_idx in range(args.num_runs):
@@ -452,13 +458,17 @@ def train(args):
                     f"(seed={run_seed})"
                 )
 
-                result = train_one_run(
+                result, best_run_state = train_one_run(
                     args,
                     model_class,
                     embedding_matrix,
                     datasets,
                     run_seed,
                 )
+
+                # Save best model accross runs
+                if args.save_model and result["best_val_macro_f1"] > overall_best_macro:
+                    best_model_state = copy.deepcopy(best_run_state)
 
                 experiment_results.append(result)
 
@@ -501,6 +511,10 @@ def train(args):
 
             print("\nExperiment summary:")
             print(json.dumps(summary, indent=4))
+
+            if args.save_model and best_model_state:
+                torch.save(best_model_state, model_path)
+                print(f"\nModel saved to {'/'.join(model_path.parts[-2:])}")
 
     return all_results
 

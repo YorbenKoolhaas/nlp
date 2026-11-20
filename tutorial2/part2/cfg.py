@@ -13,6 +13,7 @@ def parse_args() -> argparse.Namespace:
         default=["gru"],
         help="One or more recurrent architectures.",
     )
+    parser.add_argument("--save-model", action="store_true")
 
     parser.add_argument(
         "--embedding",

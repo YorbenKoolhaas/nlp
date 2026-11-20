@@ -10,7 +10,7 @@ Examples
     python analyse_parameters.py --input-dir results
     python analyse_parameters.py --input-dir results --exclude-config seed num_runs
     python analyse_parameters.py --color-by accuracy_mean
-    python analyse_parameters.py --show-files
+    python analyse_parameters.py --output "results/analysis_parameters/slide_parameter_analysis.html" --exclude-config batch_size hidden_size num_layers train_embeddings
 """
 
 from __future__ import annotations
@@ -30,7 +30,12 @@ RESULT_DIR = Path("results")
 PLOT_DIR = RESULT_DIR / "analysis_parameters"
 
 SUMMARY_METRICS = ("accuracy_mean", "macro_f1_mean")
+# SUMMARY_METRICS_RANGE = {"accuracy_mean":(-1, -1), "macro_f1_mean":(-1, -1)}
+SUMMARY_METRICS_RANGE = {"accuracy_mean":(0.8, 0.84), "macro_f1_mean":(0.72, 0.78)}
 
+JITTER_CATEGORICAL = False
+JITTER_AMOUNT = 0.03
+JITTER_BY_METRIC = "macro_f1_mean"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -248,13 +253,45 @@ def main() -> None:
             tickvals = sorted(labels)
             dimension["tickvals"] = tickvals
             dimension["ticktext"] = [labels[value] for value in tickvals]
+
+        # Apply optional fixed ranges to summary metric axes.
+        # A bound of -1 means use the observed data minimum/maximum.
+        if key in SUMMARY_METRICS_RANGE:
+            min_bound, max_bound = SUMMARY_METRICS_RANGE[key]
+
+            if min_bound != -1 or max_bound != -1:
+                values = dimension["values"]
+
+                axis_min = min(values) if min_bound == -1 else min_bound
+                axis_max = max(values) if max_bound == -1 else max_bound
+
+                if axis_min >= axis_max:
+                    raise ValueError(
+                        f"Invalid range for {key}: "
+                        f"minimum ({axis_min}) must be smaller "
+                        f"than maximum ({axis_max})."
+                    )
+
+                dimension["range"] = [axis_min, axis_max]
+
+        if JITTER_CATEGORICAL:
+            # Rank experiments by their F1 score.
+            ranks = frame[JITTER_BY_METRIC].rank(method="average", pct=True)
+
+            # Map ranks to [-JITTER_AMOUNT, JITTER_AMOUNT].
+            jitter = (ranks - 0.5) * 2 * JITTER_AMOUNT
+
+            for key in category_labels:
+                frame[key] = frame[key] + jitter
+
         plot_dimensions.append(dimension)
 
     fig = px.parallel_coordinates(
         frame,
         dimensions=dimensions,
         color=args.color_by,
-        color_continuous_scale="Viridis",
+        # color_continuous_scale="Viridis",
+        color_continuous_scale="Jet",
         labels={
             "accuracy_mean": "Accuracy mean",
             "macro_f1_mean": "Macro F1 mean",
